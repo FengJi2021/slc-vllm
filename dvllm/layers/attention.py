@@ -79,47 +79,125 @@ class Attention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
 
-    def _fallback_prefill_attention(self, q, k, v, context):
-        if q.dim() == 4:
-            try:
-                return F.scaled_dot_product_attention(
-                    q, k, v, attn_mask=None, is_causal=True
+    def _fallback_prefill_attention(
+        self, q, k, v, context, chunk_size: int | None = None
+    ):
+        # q: [N, num_heads, D], k/v: [N, num_kv_heads, D] (tokens of all seqs concatenated)
+        # Run causal SDPA per-sequence using cu_seqlens_q so tokens of different
+        # sequences never attend to each other.
+        N, H, D = q.shape
+        kv_heads = k.shape[1]
+        cu = context.cu_seqlens_q
+        if cu is None:
+            # single sequence covering all tokens
+            cu = torch.tensor([0, N], device=q.device, dtype=torch.int32)
+
+        outs = []
+        for s in range(len(cu) - 1):
+            start = int(cu[s].item())
+            end = int(cu[s + 1].item())
+            if end <= start:
+                continue
+            # [1, heads, L, D]
+            q_s = q[start:end].permute(1, 0, 2).unsqueeze(0)
+            k_s = k[start:end].permute(1, 0, 2).unsqueeze(0)
+            v_s = v[start:end].permute(1, 0, 2).unsqueeze(0)
+            if chunk_size is not None and end - start > chunk_size:
+                out = self._fallback_chunked_prefill_sequence(q_s, k_s, v_s, chunk_size)
+            else:
+                if H != kv_heads:
+                    factor = H // kv_heads
+                    k_s = k_s.repeat_interleave(factor, dim=1)
+                    v_s = v_s.repeat_interleave(factor, dim=1)
+                out = F.scaled_dot_product_attention(
+                    q_s, k_s, v_s, attn_mask=None, is_causal=True, scale=self.scale
+                )  # [1, heads, L, D]
+            outs.append(out.squeeze(0).permute(1, 0, 2))  # [L, heads, D]
+        return torch.cat(outs, dim=0)  # [N, num_heads, D]
+
+    def _fallback_chunked_prefill_sequence(self, q, k, v, chunk_size: int):
+        """Compute one causal prefill sequence without materializing full attention."""
+        _, num_heads, seq_len, _ = q.shape
+        num_kv_heads = k.shape[1]
+        factor = num_heads // num_kv_heads
+        out_chunks = []
+
+        for start in range(0, seq_len, chunk_size):
+            end = min(start + chunk_size, seq_len)
+            q_chunk = q[:, :, start:end, :]
+            k_chunk = k[:, :, :end, :]
+            v_chunk = v[:, :, :end, :]
+
+            if factor > 1:
+                k_chunk = k_chunk.repeat_interleave(factor, dim=1)
+                v_chunk = v_chunk.repeat_interleave(factor, dim=1)
+
+            query_positions = torch.arange(start, end, device=q.device).unsqueeze(1)
+            key_positions = torch.arange(end, device=q.device).unsqueeze(0)
+            causal_mask = key_positions <= query_positions
+            out_chunks.append(
+                F.scaled_dot_product_attention(
+                    q_chunk,
+                    k_chunk,
+                    v_chunk,
+                    attn_mask=causal_mask,
+                    is_causal=False,
+                    scale=self.scale,
                 )
-            except Exception:
-                B, Lq, H, D = q.shape
-                _, Lk, _, _ = k.shape
-                q2 = q.reshape(B * H, Lq, D)
-                k2 = k.reshape(B * H, Lk, D)
-                v2 = v.reshape(B * H, Lk, D)
-                scores = torch.bmm(q2, k2.transpose(1, 2)) * (1.0 / (D**0.5))
-                mask = torch.tril(
-                    torch.ones(Lq, Lk, device=scores.device, dtype=torch.bool)
-                )
-                scores = scores.masked_fill(~mask.unsqueeze(0), float("-inf"))
-                probs = F.softmax(scores, dim=-1)
-                out = torch.bmm(probs, v2)
-                return out.reshape(B, Lq, H, D)
-        else:
-            N, H, D = q.shape
-            q2 = q.reshape(N * H, 1, D)
-            k2 = k.reshape(N * H, -1, D)
-            v2 = v.reshape(N * H, -1, D)
-            scores = torch.bmm(q2, k2.transpose(1, 2)) * (1.0 / (D**0.5))
-            probs = F.softmax(scores, dim=-1)
-            out = torch.bmm(probs, v2)
-            return out.reshape(N, H, D)
+            )
+
+        return torch.cat(out_chunks, dim=2)
 
     def _fallback_decode_attention(self, q, k_cache, v_cache, context):
+        # q: [N, num_heads, head_dim] (one new token per sequence)
+        # k_cache / v_cache: paged [num_blocks, block_size, num_kv_heads, head_dim]
+        # For each sequence we gather its full K/V history from the paged cache
+        # using block_tables + context_lens, then run causal SDPA.
         N, H, D = q.shape
-        q2 = q.reshape(H * N, 1, D)
-        k2 = k_cache.permute(1, 0, 2).reshape(H * N, k_cache.size(0), D)
-        v2 = v_cache.permute(1, 0, 2).reshape(H * N, v_cache.size(0), D)
-        scores = torch.bmm(q2, k2.transpose(1, 2)) * (1.0 / (D**0.5))
-        probs = F.softmax(scores, dim=-1)
-        out = torch.bmm(probs, v2)
-        return out.reshape(N, H, D)
+        block_size = k_cache.size(1)
+        block_tables = context.block_tables  # [N, max_num_blocks]
+        context_lens = context.context_lens  # [N]
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+        outs = []
+        for i in range(N):
+            ctx_len = int(context_lens[i].item())
+            num_blocks = (ctx_len + block_size - 1) // block_size
+            blocks = block_tables[i, :num_blocks]  # [num_blocks]
+
+            # gather blocks: [num_blocks, block_size, num_kv_heads, head_dim]
+            k_blocks = k_cache[blocks]
+            v_blocks = v_cache[blocks]
+            kv_heads = k_blocks.size(2)
+            # flatten block/offset dims and trim padding to real context length
+            k_i = k_blocks.reshape(-1, kv_heads, D)[:ctx_len]  # [ctx_len, kv_heads, D]
+            v_i = v_blocks.reshape(-1, kv_heads, D)[:ctx_len]
+
+            # [1, num_heads, 1, D]
+            q_i = q[i].unsqueeze(0).unsqueeze(2)
+            # [1, kv_heads, ctx_len, D]
+            k_i = k_i.permute(1, 0, 2).unsqueeze(0)
+            v_i = v_i.permute(1, 0, 2).unsqueeze(0)
+
+            # GQA: repeat kv heads to match query heads
+            if H != kv_heads:
+                factor = H // kv_heads
+                k_i = k_i.repeat_interleave(factor, dim=1)
+                v_i = v_i.repeat_interleave(factor, dim=1)
+
+            out = F.scaled_dot_product_attention(
+                q_i, k_i, v_i, attn_mask=None, is_causal=False, scale=self.scale
+            )  # [1, num_heads, 1, D]
+            outs.append(out.reshape(H, D))
+
+        return torch.stack(outs, dim=0)  # [N, num_heads, head_dim]
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        prefill_chunk_size: int | None = None,
+    ):
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
 
@@ -154,7 +232,9 @@ class Attention(nn.Module):
                     block_table=context.block_tables,
                 )
             else:
-                return self._fallback_prefill_attention(q, k, v, context)
+                return self._fallback_prefill_attention(
+                    q, k, v, context, chunk_size=prefill_chunk_size
+                )
         else:
             if use_flash:
                 return flash_attn_with_kvcache(

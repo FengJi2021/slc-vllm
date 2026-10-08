@@ -562,15 +562,17 @@ class RunModel:
                 f"Sampler output shape: {sampled_tensor.shape}, dtype: {sampled_tensor.dtype}"
             )
 
-            # sampled_tensor 形状: [B, L]
-            # 取最后一列作为本步新生成的 token
-            if sampled_tensor.dim() == 2:
-                last_tokens = sampled_tensor[:, -1]  # [B]
+            # sampled_tensor is [B, L]. With the flattened (B=1) layout:
+            #   - prefill: L collapsed to 1 -> one token for the (single) seq
+            #   - decode : L == num_seqs, one token per sequence along L
+            # Flatten to a 1-D list of tokens, one per scheduled sequence.
+            flat = sampled_tensor.reshape(-1)
+            n = len(seqs)
+            if flat.numel() >= n:
+                token_ids = flat[-n:].tolist()
             else:
-                last_tokens = sampled_tensor  # [B]
-
-            token_ids = last_tokens.tolist()  # 转为 python list
-            logger.debug(f"Final token_ids (last tokens only): {token_ids}")
+                token_ids = flat.tolist()
+            logger.debug(f"Final token_ids: {token_ids}")
 
         # 6. 清理上下文
         reset_context()

@@ -8,6 +8,7 @@ from transformers import Qwen3Config
 from typing import Optional
 
 from dvllm.layers.activation import SiluAndMul
+from dvllm.layers.attention import Attention
 from dvllm.layers.embed_head import ParallelLMHead, VocabParallelEmbedding
 from dvllm.layers.layernorm import RMSNorm
 from dvllm.layers.rotary_embedding import get_rope
@@ -38,6 +39,15 @@ class TransfomerBlock(nn.Module):
         
         self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False)
 
+        # paged KV-cache attention (used by the engine; k_cache/v_cache filled
+        # in RunModel.allocate_kv_cache). Works on CUDA (flash) and MPS/CPU.
+        self.attn = Attention(
+            num_heads=num_heads,
+            head_dim=head_dim,
+            scale=scaling,
+            num_kv_heads=num_kv_heads,
+        )
+
         # attention norm
         # TODO eps from config?
         self.attn_norm = RMSNorm(hidden_size, eps=DEFAULT_EPS)
@@ -54,8 +64,8 @@ class TransfomerBlock(nn.Module):
         self.down_proj = nn.Linear(ff_hidden_size, hidden_size, bias=False)
         self.ffn_activation = SiluAndMul()
 
-        # debug flag
-        self.debug = True
+        # debug flag (off by default; enable per-layer via DV_DEBUG_LAYERS env)
+        self.debug = False
 
     def _attention_range_checker(self, mean, std, min_val, max_val) -> bool:
         def is_norm(value, lower, upper) -> bool:
@@ -246,28 +256,23 @@ class TransfomerBlock(nn.Module):
         # Determine scale
         real_sdpa_scale = sdpa_scale if sdpa_scale else 1.0 / math.sqrt(self.head_dim)
 
-        # chunked attention
-        device = q.device.type
-        attn_out: Optional[T] = None
-        if device == "mps" and L > chunked_threshold:
-            attn_out = self._chunked_attention(q, k, v, chunk_size, real_sdpa_scale)
-        else:
-            factor = self.num_heads // self.num_kv_heads
-            if factor > 1:
-                k = (
-                    k[:, :, None, :, :]
-                    .expand(B, self.num_kv_heads, factor, L, self.head_dim)
-                    .reshape(B, self.num_kv_heads * factor, L, self.head_dim)
-                )
-                v = (
-                    v[:, :, None, :, :]
-                    .expand(B, self.num_kv_heads, factor, L, self.head_dim)
-                    .reshape(B, self.num_kv_heads * factor, L, self.head_dim)
-                )
-            out_t = self._sdpa(q, k, v, scale=real_sdpa_scale)
-            out_t = out_t.transpose(1, 2).contiguous()  # B, L, n_heads, head_dim
-            attn_out = out_t.view(B, L, self.num_heads * self.head_dim)
-            attn_out = self.o_proj(attn_out)
+        # Paged KV-cache attention via the engine context.
+        # Engine runs with B=1 (flattened tokens), so N == L.
+        # Convert [B, heads, L, head_dim] -> [N, heads, head_dim].
+        q_a = q.transpose(1, 2).reshape(B * L, self.num_heads, self.head_dim)
+        k_a = k.transpose(1, 2).reshape(B * L, self.num_kv_heads, self.head_dim)
+        v_a = v.transpose(1, 2).reshape(B * L, self.num_kv_heads, self.head_dim)
+
+        prefill_chunk_size = (
+            chunk_size if q.device.type == "mps" and L > chunked_threshold else None
+        )
+        # Keep chunking at the PagedAttention call so K/V is still cached before
+        # the MPS prefill fallback limits its peak attention-memory usage.
+        attn_o = self.attn(
+            q_a, k_a, v_a, prefill_chunk_size=prefill_chunk_size
+        )  # [N, num_heads, head_dim]
+        attn_out = attn_o.reshape(B, L, self.num_heads * self.head_dim)
+        attn_out = self.o_proj(attn_out)
 
         # residual layer
         x = x + attn_out
@@ -424,7 +429,13 @@ class Qwen3ForCausalLM_V2(nn.Module):
         """
         B, L, H = hidden_states.shape
 
-        if B == 1 and L > 1:
+        # During prefill (single flattened sequence) only the last position is
+        # needed for sampling. During decode each position is a *different*
+        # sequence's new token, so we must keep them all.
+        from dvllm.utils.context import get_context
+
+        is_prefill = get_context().is_prefill
+        if is_prefill and B == 1 and L > 1:
             hidden_states = hidden_states[:, -1, :]
             L = 1
 
