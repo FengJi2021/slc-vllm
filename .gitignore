@@ -13,3 +13,5 @@ wheels/
 .env
 
 *.log
+# slc-server background log
+server.log

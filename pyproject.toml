@@ -19,11 +19,14 @@ dependencies = [
     "numpy>=1.25",
     "xxhash>=3.4.0",
     "black>=25.12.0",
+    "fastapi>=0.142.4",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 # 可选：定义命令行入口
 [project.scripts]
 d-vllm-example = "example:main"
+slc-server = "dvllm.server.cli:main"
 
 [tool.setuptools]
 # Auto-discover packages
@@ -36,4 +39,5 @@ dev = [
     "flake8>=7.3.0",
     "ipykernel>=7.1.0",
     "isort>=7.0.0",
+    "openai>=3.26.0",
 ]

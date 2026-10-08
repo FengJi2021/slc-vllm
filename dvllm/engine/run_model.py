@@ -259,6 +259,12 @@ class RunModel:
                 )
                 // block_bytes
             )
+        elif config.num_kvcache_blocks > 0:
+            # 显式指定了 KV cache 块数（例如 server 的 --kv-blocks），直接使用
+            logger.info(
+                f"{device.type} device: using configured KV cache blocks "
+                f"{config.num_kvcache_blocks}"
+            )
         elif device.type == "mps":
             # MPS (Apple Metal) 内存受限，使用较小的 KV cache
             # Qwen3-0.6B 模型，block_size=256，约 2 个块就够了
