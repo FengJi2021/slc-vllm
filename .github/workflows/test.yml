@@ -58,10 +58,15 @@ jobs:
         timeout-minutes: 10
         run: uv run python test/parity.py --model ~/huggingface/Qwen3-0.6B --device cpu
 
+      # The server runs from the venv, not `uv run`, and is stopped when the
+      # step ends: a `uv run` left in the background holds uv's cache lock, and
+      # setup-uv's post-job cache prune timed out on it (300s) and failed the job.
       - name: Server smoke
         timeout-minutes: 15
         run: |
-          uv run slc-server --model ~/huggingface/Qwen3-0.6B --device cpu --port 8000 > server.log 2>&1 &
+          .venv/bin/slc-server --model ~/huggingface/Qwen3-0.6B --device cpu --port 8000 > server.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid 2>/dev/null || true' EXIT
           for i in $(seq 1 120); do
             curl -sf http://127.0.0.1:8000/health && break
             sleep 2
