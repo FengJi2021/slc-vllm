@@ -10,7 +10,6 @@ from dvllm.utils.context import set_context, get_context, reset_context
 from dvllm.utils.loader import load_model
 from dvllm.layers.sampler import Sampler
 from dvllm.engine.seq import Sequence
-from dvllm.models.qwen3 import Qwen3ForCausalLM
 import logging
 
 logger = logging.getLogger(__name__)
@@ -63,7 +62,6 @@ class RunModel:
         # ------------------------
         # 4. 构建模型并加载权重
         # ------------------------
-        # self.model = Qwen3ForCausalLM(hf_config).to(self.device)
         self.model = Qwen3ForCausalLM_V2(hf_config).to(self.device)
         load_model(self.model, config.model, device=self.device)
 

@@ -38,7 +38,7 @@ class LLMEngine:
         for i in range(1, config.tensor_parallel_size):
             logger.info("!!!!!!!!!!!!!!!!!!!!!!!!!")
             event = ctx.Event()
-            process = ctx.Process(target=ModelRunner, args=(config, i, event))
+            process = ctx.Process(target=RunModel, args=(config, i, event))
             logger.debug(f"process:{process}")
             process.start()
             self.ps.append(process)

@@ -14,10 +14,11 @@ Currently supported model: **Qwen3** (tested with
 dvllm/
   engine/    LLMEngine, Scheduler, BlockManager (paged KV cache), RunModel
   layers/    attention (flash-attn / SDPA fallback), rotary, sampler, ...
-  models/    Qwen3 implementations
+  models/    Qwen3 implementation
   server/    OpenAI-compatible FastAPI server (slc-server)
-test/        example, throughput benchmark, server smoke test
-tools/       debugging helpers
+test/        parity check vs transformers, throughput benchmark, server smoke test
+tools/       get_params.py (list a checkpoint's weight names and shapes)
+docs/        subsystem references, code standards, benchmarks, roadmap
 ```
 
 ## Requirements
@@ -234,18 +235,29 @@ uv sync --all-extras --group dev
 source .venv/bin/activate
 ```
 
-### Get model params
+### Python API
 
-```shell
-./tools/get_params.py --model ModelPath (ex:~/huggingface/Qwen3-0.6B/model.safetensors)
+```python
+from dvllm import LLM, SParams
+
+llm = LLM("/path/to/Qwen3-0.6B", enforce_eager=True, device_type="mps")
+prompt = "<|im_start|>user\nintroduce yourself<|im_end|>\n<|im_start|>assistant\n"
+print(llm.generate([prompt], SParams(temperature=0.7, max_tokens=128))[0]["text"])
 ```
 
-### Example run
+### Correctness check
 
-This checks that inference runs correctly (e.g. on macOS / MPS):
+Compares dvllm's greedy output with Hugging Face transformers on the same
+model. Run it after any change to the engine, layers or model:
 
 ```shell
-./test/run.sh
+uv run python test/parity.py --device mps     # or cpu / cuda
+```
+
+### Inspect a checkpoint
+
+```shell
+uv run python tools/get_params.py --model ~/huggingface/Qwen3-0.6B/model.safetensors
 ```
 
 ### Throughput benchmark
@@ -264,5 +276,13 @@ raise it so larger batches fit.
 
 ### Debugging
 
-See [DEBUG_README.md](DEBUG_README.md) for layer-by-layer debugging
-(`DV_DEBUG_LAYERS`) and [tools/](tools/) for helpers.
+See [Debugging numerics](docs/subsystems/model-execution.md#debugging-numerics)
+for layer-by-layer checks (`DV_DEBUG_LAYERS`).
+
+### Contributing
+
+Start with [AGENTS.md](AGENTS.md) (also read by coding agents): the goals,
+the checks to run, and links to the
+[subsystem references](docs/subsystems/README.md),
+[code standards](docs/code-standards.md), [LESSONS.md](LESSONS.md),
+[benchmarks](docs/benchmarks.md) and [roadmap](docs/roadmap.md).
