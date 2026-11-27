@@ -1,16 +1,15 @@
 ---
-name: magpie-review
-description: Run the full magpie-style process on this repo - review a PR by running it and breaking it on purpose, record and merge only the reviewed head, run the periodic lessons review that grows LESSONS.md and promotes rules into the code standards, screen outside contributions for harm, or upgrade the repo's agent docs to the full magpie layout. Use when the user types /magpie-review with a mode (review, merge, lessons, harm, adopt).
+name: repo-review
+description: Run this repo's full review process - review a PR by running it and breaking it on purpose, record and merge only the reviewed head, run the periodic lessons review that grows LESSONS.md and promotes rules into the code standards, screen outside contributions for harm, or grow the repo's agent docs from the minimal set to the full layout. Use when the user types /repo-review with a mode (review, merge, lessons, harm, adopt).
 disable-model-invocation: true
 argument-hint: "review <PR#> | merge <PR#> | lessons [since] | harm <PR#> | adopt"
 ---
 
-# magpie-review
+# repo-review
 
-The process [yetone/magpie](https://github.com/yetone/magpie) uses to let
-agents write, review and merge code without the quality drifting, adapted to
-this repo (a PyTorch inference engine whose goal is more models, more
-throughput and lower latency, measured against mlx-lm).
+How this repo lets agents write, review and merge code without the quality
+drifting. The repo is a PyTorch inference engine whose goal is more models,
+more throughput and lower latency, measured against mlx-lm.
 
 The idea in one paragraph: **every review runs the code, every check that
 wasn't run is said out loud, every mistake that reaches `main` becomes a
@@ -36,7 +35,7 @@ Then pick the mode from the arguments. With no arguments, ask which mode.
 | `merge <PR#>` | Only when the user asked to merge: verify the record names the current head and CI is green, then `gh pr merge --match-head-commit`. | [references/review.md#merge](references/review.md#merge) |
 | `lessons [since]` | Review commits since the `reviewed-through` marker: fixes of fixes, things that shouldn't have merged, thin verification. Write or bump lessons, promote 3-day lessons into the code standards. | [references/lessons-review.md](references/lessons-review.md) |
 | `harm <PR#>` | Only the "look for harm first" scan, for a PR from someone other than the maintainer. | [references/review.md#1-look-for-harm-first](references/review.md#1-look-for-harm-first) |
-| `adopt` | Bring the repo from the minimal setup to the full magpie layout, one piece at a time, asking before each. | [references/repo-model.md](references/repo-model.md) |
+| `adopt` | Bring the repo from the minimal setup to the full layout, one piece at a time, asking before each. | [references/repo-model.md](references/repo-model.md) |
 
 ## Rules for every mode
 

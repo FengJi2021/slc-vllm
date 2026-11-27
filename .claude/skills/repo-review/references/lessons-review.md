@@ -1,7 +1,7 @@
 # The lessons review
 
-magpie reviews each day's commits for what went wrong and keeps what it
-learned in `LESSONS.md`. A lesson seen on 3 separate days becomes a rule in
+Each day's (or week's) commits are reviewed for what went wrong, and what
+was learned is kept in `LESSONS.md`. A lesson seen on 3 separate days becomes a rule in
 `docs/code-standards.md`. This is how the repo gets better at not repeating
 itself. Run it daily when the repo is busy, or every week or so when it's
 quiet. It can be scheduled (`/schedule`) once the user wants that.

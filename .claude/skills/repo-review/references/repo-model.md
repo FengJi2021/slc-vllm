@@ -1,6 +1,6 @@
 # The repo model, and adopting the rest of it
 
-## How magpie's repo is laid out
+## The full layout
 
 | File | Role | How it grows |
 | --- | --- | --- |
