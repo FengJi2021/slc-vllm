@@ -1,0 +1,74 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A PR's run is cancelled by its next push; main's runs finish.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      # Fatal errors only (syntax errors, undefined names). Style is not
+      # enforced yet: the tree isn't black-formatted (see docs/roadmap.md).
+      - name: Flake8 (fatal)
+        run: uvx flake8 --count --show-source --select=E9,F63,F7,F82 dvllm test tools
+
+  # GitHub's macOS runners are Apple Silicon but have no Metal (MPS), so this
+  # runs on CPU. It still covers the engine, the SDPA attention path that MPS
+  # uses, and the server. MPS and performance are checked locally (AGENTS.md).
+  cpu:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      TOKENIZERS_PARALLELISM: 'false'
+      HF_HUB_DISABLE_PROGRESS_BARS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --frozen --group dev
+
+      - name: Cache model
+        uses: actions/cache@v4
+        with:
+          path: ~/huggingface/Qwen3-0.6B
+          key: hf-Qwen3-0.6B-v1
+
+      - name: Download model
+        run: |
+          test -f ~/huggingface/Qwen3-0.6B/config.json || uv run python download_model.py
+
+      - name: Greedy parity vs transformers
+        timeout-minutes: 10
+        run: uv run python test/parity.py --model ~/huggingface/Qwen3-0.6B --device cpu
+
+      - name: Server smoke
+        timeout-minutes: 15
+        run: |
+          uv run slc-server --model ~/huggingface/Qwen3-0.6B --device cpu --port 8000 > server.log 2>&1 &
+          for i in $(seq 1 120); do
+            curl -sf http://127.0.0.1:8000/health && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8000/health || { cat server.log; exit 1; }
+          uv run python test/server_smoke.py --base-url http://127.0.0.1:8000/v1 --concurrency 2
+
+      - name: Server log
+        if: always()
+        run: cat server.log || true
