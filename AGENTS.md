@@ -59,10 +59,9 @@ run** and go in the PR description.
 
 ## Reviews
 
-Every PR gets a read-only first pass on GitHub, which sets the commit status
-`review/first-pass`. A full local review (`/repo-review review`, with MPS)
-runs on the maintainer's machine only for PRs that pass the first pass and
-CI and that the maintainer approves (`local-review` label or a `/review`
+Reviews run locally on the maintainer's machine, never in GitHub Actions. A
+full review (`/repo-review review`, with MPS) runs only for PRs whose CI is
+green and that the maintainer approves (`local-review` label or a `/review`
 comment). The maintainer merges.
 
 ## After a change

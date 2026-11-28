@@ -59,11 +59,10 @@ Then pick the mode from the arguments. With no arguments, ask which mode.
 
 ## Where it runs
 
-The GitHub first pass (`.github/workflows/first-pass.yml`) does a
-read-only version of `review` on every new PR. A full local `review` runs
-only for PRs that pass the first pass and CI and that the maintainer
-approves, queued by the maintainer's local review agent, or when the
-maintainer types the command.
+Locally, on the maintainer's machine. A full `review` runs only for PRs
+whose CI is green and that the maintainer approves, queued by the
+maintainer's local review agent, or when the maintainer types the command.
+Step 1 (look for harm) always comes before running any of the PR's code.
 
 ## Repo-specific checks (from AGENTS.md)
 
