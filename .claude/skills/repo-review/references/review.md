@@ -49,7 +49,7 @@ authors), apply it here.
 
 ## 2. Run it on the merged base
 
-Under the local queue (`tools/reviewq`) the worktree is already prepared
+Under the maintainer's review agent the worktree is already prepared
 and merged; skip to the checks.
 
 ```shell
