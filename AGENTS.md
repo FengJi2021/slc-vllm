@@ -57,6 +57,11 @@ run** and go in the PR description.
 - **Keep it readable.** This is also a learning codebase: prefer a clear
   implementation with a comment on *why* over a clever one.
 
+## Reviews
+
+Every PR gets a read-only first pass on GitHub. A full local review runs
+only when the maintainer approves it: see [tools/reviewq](tools/reviewq/README.md).
+
 ## After a change
 
 If you learned something a future change would otherwise get wrong, add it to

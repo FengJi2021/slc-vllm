@@ -54,8 +54,15 @@ Then pick the mode from the arguments. With no arguments, ask which mode.
   closing, labelling or filing an issue happens only when the user asked
   for it in this session. Never merge unprompted.
 - **Work in your own checkout.** Use `git worktree add --detach` under the
-  scratchpad for a PR head; don't switch the user's working branch or touch
-  their uncommitted files.
+  scratchpad for a PR head (the local queue prepares one for you); don't
+  switch the user's working branch or touch their uncommitted files.
+
+## Where it runs
+
+The GitHub first pass (`.github/workflows/first-pass.yml`) does a
+read-only version of `review` on every new PR. A full local `review` runs
+only for PRs the maintainer approves, queued by `tools/reviewq` (see its
+README), or when the maintainer types the command.
 
 ## Repo-specific checks (from AGENTS.md)
 

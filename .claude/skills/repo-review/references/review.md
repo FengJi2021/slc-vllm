@@ -49,6 +49,9 @@ authors), apply it here.
 
 ## 2. Run it on the merged base
 
+Under the local queue (`tools/reviewq`) the worktree is already prepared
+and merged; skip to the checks.
+
 ```shell
 WT=<scratchpad>/review-<N>
 git fetch origin pull/<N>/head:review-<N> <base>
